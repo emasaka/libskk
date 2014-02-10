@@ -238,13 +238,13 @@ namespace Skk {
             return builder.str;
         }
 
-        string expand_expr (string text) {
-            if (text.has_prefix ("(")) {
+        string expand_expr (string text, int[] numeric, string midasi) {
+            if (text.has_prefix ("(") && text.has_suffix (")")) {
                 var reader = new ExprReader ();
                 int index = 0;
                 var node = reader.read_expr (text, ref index);
                 var evaluator = new ExprEvaluator ();
-                var _text = evaluator.eval (node);
+                var _text = evaluator.eval (node, numeric, midasi);
                 if (_text != null) {
                     return _text;
                 }
@@ -322,13 +322,13 @@ namespace Skk {
                 var _candidates = dict.lookup (midasi, okuri);
                 foreach (var candidate in _candidates) {
                     var text = candidate.text;
-                    text = expand_expr (text);
+                    text = expand_expr (text, numerics, midasi);
                     text = expand_numeric_references (text, numerics);
                     candidate.output = text;
                     // annotation may be an expression
                     if (candidate.annotation != null) {
                         candidate.annotation = expand_expr (
-                            candidate.annotation);
+                            candidate.annotation, numerics, midasi);
                     }
                 }
                 candidates.add_candidates (_candidates);
