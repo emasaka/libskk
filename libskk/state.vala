@@ -238,13 +238,13 @@ namespace Skk {
             return builder.str;
         }
 
-        string expand_expr (string text, int[] numeric, string midasi) {
+        string expand_expr (string text, int[] numerics, string midasi) {
             if (text.has_prefix ("(") && text.has_suffix (")")) {
                 var reader = new ExprReader ();
                 int index = 0;
                 var node = reader.read_expr (text, ref index);
                 var evaluator = new ExprEvaluator ();
-                var _text = evaluator.eval (node, numeric, midasi);
+                var _text = evaluator.eval_expr (node, numerics, midasi);
                 if (_text != null) {
                     return _text;
                 }

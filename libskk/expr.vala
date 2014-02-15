@@ -18,38 +18,78 @@
 using Gee;
 
 namespace Skk {
-    enum ExprNodeType {
-        ARRAY,
-        SYMBOL,
-        STRING,
-        NUMBER
+    errordomain LispError { TYPE, VAR, FUNC, PARAM, UNKNOWN }
+
+    interface LispObject : Object {
+        public abstract string to_string ();
     }
 
-    struct ExprNode {
-        public ExprNodeType type;
-        public LinkedList<ExprNode?> nodes;
-        public string data;
-        public int number;
+    class LispString : Object, LispObject {
+        public string data { get; private set; }
+        public LispString (string data) { this.data = data; }
+
+        public string to_string () { return this.data; }
     }
 
-    private ExprNode array_node (LinkedList<ExprNode?> ary) {
-        return ExprNode () { type = ExprNodeType.ARRAY, nodes = ary };
+    class LispInt : Object, LispObject {
+        public int data { get; private set; }
+        public LispInt (int data) { this.data = data; }
+
+        public string to_string () { return this.data.to_string (); }
     }
 
-    private ExprNode symbol_node (string str) {
-        return ExprNode () { type = ExprNodeType.SYMBOL, data = str };
+    class LispSymbol : Object, LispObject {
+        public string data { get; private set; }
+        public LispSymbol (string data) { this.data = data; }
+
+        public string to_string () { return this.data; }
     }
 
-    private ExprNode string_node (string str) {
-        return ExprNode () { type = ExprNodeType.STRING, data = str };
+    interface LispList : LispObject {
+        public abstract LispList rcons (LispObject x);
     }
 
-    private ExprNode number_node (int num) {
-        return ExprNode () { type = ExprNodeType.NUMBER, number = num };
+    class LispNil : Object, LispObject, LispList {
+        public LispList rcons (LispObject x) {
+            return new LispCons (x, this);
+        }
+
+        public string to_string () { return ""; }
+    }
+
+    class LispCons : Object, LispObject, LispList {
+        public LispObject car { get; set; }
+        public LispObject cdr { get; set; }
+
+        public LispCons (LispObject kar, LispObject kdr) {
+            this.car = kar;
+            this.cdr = kdr;
+        }
+
+        public LispList rcons (LispObject x) {
+            LispCons p = this;
+            while (p.cdr is LispCons) {
+                p = (LispCons) p.cdr;
+            }
+            var old = p.cdr;
+            p.cdr = new LispCons (x, old);
+            return this;
+        }
+
+        public LispObject nth (int n) throws LispError {
+            LispObject p = this;
+            for (int i = 0; i < n; i++) {
+                if (! (p is LispCons)) throw new LispError.PARAM ("");
+                p = ((LispCons) p).cdr;
+            }
+            return ((LispCons) p).car;
+        }
+
+        public string to_string () { return ""; }
     }
 
     class ExprReader : Object {
-        public ExprNode read_symbol (string expr, ref int index) {
+        public LispObject read_symbol (string expr, ref int index) {
             var builder = new StringBuilder ();
             bool stop = false;
             unichar uc = '\0';
@@ -69,12 +109,13 @@ namespace Skk {
                     break;
                 }
             }
-            return symbol_node (builder.str);
+            if (builder.str == "nil") {
+                return new LispNil ();
+            }
+            return new LispSymbol (builder.str);
         }
 
-        public ExprNode? read_string (string expr, ref int index) {
-            return_val_if_fail (index < expr.length && expr[index] == '"',
-                                null);
+        public LispString read_string (string expr, ref int index) {
             var builder = new StringBuilder ();
             index++;
             bool stop = false;
@@ -130,10 +171,10 @@ namespace Skk {
                     break;
                 }
             }
-            return string_node (builder.str);
+            return new LispString (builder.str);
         }
 
-        public ExprNode read_number (string expr, ref int index) {
+        public LispInt read_number (string expr, ref int index) {
             int n = 0;
             unichar uc = '\0';
             while (expr.get_next_char (ref index, out uc)) {
@@ -144,48 +185,46 @@ namespace Skk {
                     break;
                 }
             }
-            return number_node (n);
+            return new LispInt (n);
         }
 
-        public ExprNode read_character (string expr, ref int index) {
+        public LispInt read_character (string expr, ref int index) {
             unichar uc = '\0';
-            // FIXME handle escaped characters
+            // TODO: handle escaped characters
             expr.get_next_char (ref index, out uc);
-            return number_node ((int) uc);
+            return new LispInt ((int) uc);
         }
 
-        public ExprNode? read_array (string expr, ref int index) {
-            return_val_if_fail (index < expr.length && expr[index] == '(',
-                                null);
-            var nodes = new LinkedList<ExprNode?> ();
+        public LispList read_list (string expr, ref int index) {
+            LispList r = new LispNil ();
             bool stop = false;
             index++;
             unichar uc = '\0';
             while (!stop && expr.get_next_char (ref index, out uc)) {
                 switch (uc) {
-                case ' ':
+                case ' ': case '\t': case '\n':
                     break;
                 case ')':
                     stop = true;
                     break;
                 default:
                     index--;
-                    nodes.add (read_expr (expr, ref index));
+                    r = r.rcons (read_expr (expr, ref index));
                     break;
                 }
             }
-            return array_node (nodes);
+            return r;
         }
 
-        public ExprNode? read_expr (string expr, ref int index) {
+        public LispObject read_expr (string expr, ref int index) {
             unichar uc = '\0';
             while (expr.get_next_char (ref index, out uc)) {
                 switch (uc) {
-                case ' ':
+                case ' ': case '\t': case '\n':
                     break;
                 case '(':
                     index--;
-                    return read_array (expr, ref index);
+                    return read_list (expr, ref index);
                 case '"':
                     index--;
                     return read_string (expr, ref index);
@@ -195,82 +234,146 @@ namespace Skk {
                     return read_number (expr, ref index);
                 case '?':
                     return read_character (expr, ref index);
+                case '\'':
+                    var x = read_expr (expr, ref index);
+                    return new LispCons (new LispSymbol ("quote"),
+                                         new LispCons (x, new LispNil ()));
                 default:
                     index--;
                     return read_symbol (expr, ref index);
                 }
             }
-            // empty expr string -> empty array
-            return array_node (new LinkedList<ExprNode?> ());
+            // empty expr string -> empty list
+            return new LispNil ();
         }
     }
 
+    struct Env {
+        public Map<string, LispObject> vars;
+        public Env () { vars = new HashMap<string, LispObject> (); }
+    }
+
+    delegate LispObject LispFuncPtr (LispList args, Env env);
+
+    // wrap delegates to store in HashMap
+    struct LispFunc {
+        public LispFuncPtr func;
+        public LispFunc (LispFuncPtr f) { func = f; }
+    }
+
     class ExprEvaluator : Object {
-        private ExprNode? call_lambda (ExprNode lmd,
-                                      LinkedList<ExprNode?> params,
-                                      Map<string, ExprNode?> env) {
-            var new_env = new HashMap<string, ExprNode?> ();
-            foreach (var entry in env.entries) {
-               new_env.set (entry.key, entry.value);
-            }
+        private Map<string, LispFunc?> funcs = new HashMap<string, LispFunc?> ();
 
-            var l_iter = lmd.nodes.list_iterator ();
-            if (! l_iter.first ()) return null; // skip 'lambda'
-            if (! l_iter.next ()) return null;
-            var args = l_iter.get ();
-            if (args.type != ExprNodeType.ARRAY) return null;
-            var a_iter = args.nodes.list_iterator ();
-            var p_iter = params.list_iterator ();
-            while (a_iter.next ()) {
-                if (! p_iter.next ()) return null;
-                var arg = a_iter.get ();
-                var param = p_iter.get ();
-                new_env.set (arg.data, param);
+        public LispObject f_concat (LispList args, Env env) {
+            LispObject p = args;
+            var builder = new StringBuilder ();
+            while (p is LispCons) {
+                var e = ((LispCons) p).car;
+                if (e is LispString) {
+                    builder.append (((LispString) e).data);
+                }
+                p = ((LispCons) p).cdr;
             }
+            return new LispString (builder.str);
+        }
 
-            ExprNode? rtn = symbol_node ("nil");
-            while (l_iter.next ()) {
-                rtn = _eval (l_iter.get (), new_env);
-                if (rtn == null) break;
+        public LispObject f_current_time_string (LispList args, Env env) {
+            var d = asctime_array (new DateTime.now_local ());
+            string asc = "%s %s %2s %s:%s:%s %s".printf(d[3], d[1], d[2], d[4],
+                                                        d[5], d[6], d[0]);
+            return new LispString (asc);
+        }
+
+        public LispObject f_pwd (LispList args, Env env) {
+            return new LispString (Environment.get_current_dir ());
+        }
+
+        public LispObject f_skk_version (LispList args, Env env) {
+            return new LispString ("%s/%s".printf (Config.PACKAGE_NAME,
+                                                   Config.PACKAGE_VERSION));
+        }
+
+        public LispObject f_minus (LispList args, Env env) {
+            return new LispInt (((LispInt) ((LispCons) args).nth (0)).data -
+                                ((LispInt) ((LispCons) args).nth (1)).data);
+        }
+
+        public LispObject f_make_string (LispList args, Env env) {
+            var builder = new StringBuilder ();
+            int num = ((LispInt) ((LispCons) args).nth (0)).data;
+            unichar c = (unichar) ((LispInt) ((LispCons) args).nth (1)).data;
+            for (int i = 0; i < num; i++) {
+                builder.append_unichar (c);
             }
-            return rtn;
+            return new LispString (builder.str);
+        }
+
+        public LispObject f_substring (LispList args, Env env) {
+            int offset = ((LispInt) ((LispCons) args).nth (1)).data;
+            int len = ((LispInt) ((LispCons) args).nth (2)).data - offset;
+            string text = ((LispString) ((LispCons) args).nth (0)).data;
+            return new LispString (text.substring (offset, len));
+        }
+
+        public LispObject f_car (LispList args, Env env) {
+            return ((LispCons) ((LispCons) args).car).car;
+        }
+
+        public LispObject f_string_to_number (LispList args, Env env) {
+            var e1 = ((LispCons) args).car;
+            return new LispInt (int.parse (((LispString) e1).data));
+        }
+
+        public LispObject f_skk_times (LispList args, Env env) {
+            var num_list = (LispList) env.vars.get ("skk-num-list");
+            LispObject p = num_list;
+            int n = 1;
+            while (p is LispCons) {
+                var e = ((LispCons) p).car;
+                if (e is LispString) {
+                    n *= int.parse (((LispString) e).data);
+                }
+                p = ((LispCons) p).cdr;
+            }
+            return new LispString (n.to_string ());
+        }
+
+        private LispObject? assoc_s (string key, LispList lst) {
+            LispObject p = lst;
+            while (p is LispCons) {
+                LispCons e = (LispCons) ((LispCons) p).car;
+                if (((LispString) e.car).data == key) {
+                    return ((LispCons) e.cdr).car;
+                }
+                p = ((LispCons) p).cdr;
+            }
+            return null;
         }
 
         private double skk_assoc_units (string u_from, string u_to) {
-            double m = 0;
-            if (u_from == "mile") {
-                if (u_to == "km") {
-                    m = 1.6093;
-                }
-                else if (u_to == "yard") {
-                    m = 1760;
-                }
-            }
-            else if (u_from == "yard") {
-                if (u_to == "feet") {
-                    m = 3;
-                }
-                else if (u_to == "cm") {
-                    m = 91.44;
-                }
-            }
-            else if (u_from == "feet") {
-                if (u_to == "inch") {
-                    m = 12;
-                }
-                else if (u_to == "cm") {
-                    m = 30.48;
-                }
-            }
-            else if (u_from == "inch") {
-                if (u_to == "feet") {
-                    m = 0.5;
-                }
-                else if (u_to == "cm") {
-                    m = 2.54;
-                }
-            }
-            return m;
+            const string alist_str = "
+((\"mile\" ((\"km\" \"1.6093\") (\"yard\" \"1760\")))
+ (\"yard\" ((\"feet\" \"3\") (\"cm\" \"91.44\")))
+ (\"feet\" ((\"inch\" \"12\") (\"cm\" \"30.48\")))
+ (\"inch\" ((\"feet\" \"0.5\") (\"cm\" \"2.54\"))))";
+
+            var reader = new ExprReader ();
+            int index = 0;
+            var alist = reader.read_expr (alist_str, ref index);
+            var r1 = assoc_s (u_from, (LispList) alist);
+            if (r1 == null) return 0;
+            var r2 = assoc_s (u_to, (LispList) r1);
+            if (r2 == null) return 0;
+            return double.parse (((LispString) r2).data);
+        }
+
+        public LispObject f_skk_gadget_units_conversion (LispList args, Env env) {
+            string u_from = ((LispString) ((LispCons) args).nth (0)).data;
+            string u_to = ((LispString) ((LispCons) args).nth (2)).data;
+            int x = ((LispInt) ((LispCons) args).nth (1)).data;
+            double m = skk_assoc_units (u_from, u_to);
+            string res = ((double) x * m).to_string ();
+            return new LispString (res + u_to);
         }
 
         struct StrsInt {
@@ -294,6 +397,26 @@ namespace Skk {
             return null;
         }
 
+        public LispObject f_skk_ad_to_gengo (LispList args, Env env) {
+            var num_list = (LispList) env.vars.get ("skk-num-list");
+            int ad = int.parse (((LispString) ((LispCons) num_list).car).data);
+
+            var builder = new StringBuilder ();
+            var g = skk_ad_to_gengo_1 (ad);
+            if (g == null) return new LispNil ();
+            builder.append (g.strs[((LispInt) ((LispCons) args).nth (0)).data]);
+            var mae = ((LispCons) args).nth (1);
+            if (mae is LispString) {
+                builder.append (((LispString) mae).data);
+            }
+            builder.append (g.num.to_string ());
+            var ato = ((LispCons) args).nth (2);
+            if (ato is LispString) {
+                builder.append (((LispString) ato).data);
+            }
+            return new LispString (builder.str);
+        }
+
         private int skk_gengo_to_ad_1 (string gengo, int y) {
             switch (gengo) {
             case "へいせい":
@@ -308,11 +431,35 @@ namespace Skk {
             return -1;
         }
 
+        public LispObject f_skk_gengo_to_ad (LispList args, Env env) {
+            var num_list = (LispList) env.vars.get ("skk-num-list");
+            int y = int.parse (((LispString) ((LispCons) num_list).car).data);
+            string midasi = ((LispString) env.vars.get ("skk-henkan-key")).data;
+
+            int idx = midasi.index_of ("#");
+            string gengo_hira = midasi.substring (0, idx);
+            var builder = new StringBuilder ();
+            int ad = skk_gengo_to_ad_1 (gengo_hira, y);
+            var mae = ((LispCons) args).nth (0);
+            if (mae is LispString) {
+                builder.append (((LispString) mae).data);
+            }
+            builder.append (ad.to_string ());
+            var ato = ((LispCons) args).nth (1);
+            if (ato is LispString) {
+                builder.append (((LispString) ato).data);
+            }
+            return new LispString (builder.str);
+        }
+
+        const string[] MONTHS = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                 "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+        const string[] DOWS_EN = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
+        const string[] DOWS_JA = {"月", "火", "水", "木", "金", "土", "日"};
+
         private int skk_assoc_month (string month) {
-            string[] months = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
             for (var i = 0; i < 12; i++) {
-                if (month == months[i]) {
+                if (month == MONTHS[i]) {
                     return i + 1;
                 }
             }
@@ -320,55 +467,45 @@ namespace Skk {
         }
 
         private string? skk_assoc_dow (string dow) {
-            string[,] dows = {
-                {"Sun", "日"}, {"Mon", "月"}, {"Tue", "火"}, {"Wed", "水"},
-                {"Thu", "木"}, {"Fri", "金"}, {"Sat", "土"}};
-
             for (var i = 0; i < 7; i++) {
-                if (dow == dows[i, 0]) {
-                    return dows[i, 1];
+                if (dow == DOWS_EN[i]) {
+                    return DOWS_JA[i];
                 }
             }
             return null;
         }
 
-        private ExprNode[]? args_to_array (int n, ListIterator<ExprNode?> iter) {
-            ExprNode[] ary = new ExprNode[n];
-            for (var i = 0; i < n; i++) {
-                if (!iter.next ()) return null;
-                ary[i] = iter.get ();
+        private string[] asctime_array (DateTime dt) {
+            return {dt.get_year ().to_string (),
+                    MONTHS[dt.get_month () - 1],
+                    dt.get_day_of_month ().to_string (),
+                    DOWS_EN[dt.get_day_of_week () - 1],
+                    "%02d".printf(dt.get_hour ()),
+                    "%02d".printf(dt.get_minute ()),
+                    "%02d".printf(dt.get_second ())};
+        }
+
+        private LispCons skk_current_date_1 () {
+            string[] dt_a = asctime_array (new DateTime.now_local ());
+            LispList dt_l = new LispNil ();
+            foreach (var x in dt_a) {
+                dt_l = dt_l.rcons (new LispString (x));
             }
-            return ary;
+            return (LispCons) dt_l;
         }
 
-        private LinkedList<ExprNode?> skk_current_date_1 () {
-            var dt = new LinkedList<ExprNode?> ();
-            var datetime = new DateTime.now_local ();
-            dt.add (string_node (datetime.get_year ().to_string ()));
-            dt.add (string_node (datetime.format ("%b%")));
-            dt.add (string_node (datetime.get_day_of_month ().to_string ()));
-            dt.add (string_node (datetime.format ("%a")));
-            dt.add (string_node (datetime.get_hour ().to_string ()));
-            dt.add (string_node (datetime.get_minute ().to_string ()));
-            dt.add (string_node (datetime.get_second ().to_string ()));
-            return dt;
-        }
-
-        private string? skk_default_current_date (LinkedList<ExprNode?> date_info,
+        private string? skk_default_current_date (LispList date_info,
                                                  string? format, int num_type,
                                                  bool gengo_p, int gengo_index,
                                                  int month_index, int dow_index) {
-            var iter = date_info.list_iterator ();
-            ExprNode[]? dt = args_to_array (4, iter);
-            if (dt == null) return null;
-            if (dt[0].type != ExprNodeType.STRING) return null;
-            if (dt[1].type != ExprNodeType.STRING) return null;
-            if (dt[2].type != ExprNodeType.STRING) return null;
-            if (dt[3].type != ExprNodeType.STRING) return null;
+            var d_year = ((LispCons) date_info).nth(0);
+            var d_month = ((LispCons) date_info).nth(1);
+            var d_day = ((LispCons) date_info).nth(2);
+            var d_dow = ((LispCons) date_info).nth(3);
             // ignore rest arguments
 
             string? year_str = null;
-            int year_i = int.parse (dt[0].data);
+            int year_i = int.parse (((LispString) d_year).data);
             if (gengo_p) {
                 var g = skk_ad_to_gengo_1 (year_i);
                 year_str = g.strs [gengo_index] +
@@ -379,270 +516,180 @@ namespace Skk {
                                              (NumericConversionType) num_type);
             }
 
-            string month_str = dt[1].data;
+            string month_str = ((LispString) d_month).data;
             if (month_index >= 0) {
-                int month_i = skk_assoc_month (dt[1].data);
+                int month_i = skk_assoc_month (((LispString) d_month).data);
                 if (month_i < 0) return null;
                 month_str = Util.get_numeric (month_i,
                                               (NumericConversionType) num_type);
             }
 
-            string day_str = Util.get_numeric (int.parse (dt[2].data),
+            string day_str = Util.get_numeric (int.parse (((LispString) d_day).data),
                                                (NumericConversionType) num_type);
 
-            string dow_str = dt[3].data;
+            string dow_str = ((LispString) d_dow).data;
             if (dow_index >= 0) {
-                var dow2 = skk_assoc_dow (dt[3].data);
+                var dow2 = skk_assoc_dow (((LispString) d_dow).data);
                 if (dow2 == null) return null;
                 dow_str = dow2;
             }
 
-            var builder = new StringBuilder ();
-            builder.printf (((format == null) ? "%s年%s月%s日(%s)" : format),
-                           year_str, month_str, day_str, dow_str);
-            return builder.str;
+            string fmt = ((format == null) ? "%s年%s月%s日(%s)" : format);
+            return fmt.printf (year_str, month_str, day_str, dow_str);
         }
 
-        private ExprNode? apply (ExprNode func, LinkedList<ExprNode?>? args,
-                                Map<string, ExprNode?> env) {
-            var iter = args.list_iterator ();
+        public LispObject f_skk_current_date (LispList args, Env env) {
+            var dt = skk_current_date_1 ();
 
-            // FIXME support other functions in more extensible way
-            if (func.data == "concat") {
-                var builder = new StringBuilder ();
-                while (iter.next ()) {
-                    var arg = iter.get ();
-                    if (arg.type == ExprNodeType.STRING) {
-                        builder.append (arg.data);
-                    }
-                }
-                return string_node (builder.str);
+            if (args is LispCons) {
+                var lmd = ((LispCons) args).car;
+                // ignore rest arguments
+
+                var q_nil = new LispNil ();
+                LispList params = q_nil;
+                params = params.rcons (dt);
+                params.rcons (q_nil);
+                params.rcons (q_nil);
+                params.rcons (q_nil);
+                return apply_lambda ((LispList) lmd, params, env);
             }
-            else if (func.data == "current-time-string") {
-                var datetime = new DateTime.now_local ();
-                return string_node (datetime.format ("%a %b %e %T %Y %z"));
+            else {
+                var rtn = skk_default_current_date (dt, null, 1, true, 0, 0, 0);
+                return new LispString (rtn);
             }
-            else if (func.data == "pwd") {
-                return string_node (Environment.get_current_dir ());
-            }
-            else if (func.data == "skk-version") {
-                return string_node ("%s/%s".printf (Config.PACKAGE_NAME,
-                                                    Config.PACKAGE_VERSION));
-            }
-            else if (func.data == "make-string") {
-                ExprNode[] args_ary = args_to_array (2, iter);
-                if (args_ary == null) return null;
-                if (args_ary[0].type != ExprNodeType.NUMBER) return null;
-                if (args_ary[1].type != ExprNodeType.NUMBER) return null;
-
-                var builder = new StringBuilder ();
-                int num = args_ary[0].number;
-                unichar c = (unichar) args_ary[1].number;
-                for (int i = 0; i < num; i++) {
-                    builder.append_unichar (c);
-                }
-                return string_node (builder.str);
-            }
-            else if (func.data == "substring") {
-                ExprNode[] args_ary = args_to_array (3, iter);
-                if (args_ary == null) return null;
-                if (args_ary[0].type != ExprNodeType.STRING) return null;
-                string text = args_ary[0].data;
-                 if (args_ary[1].type != ExprNodeType.NUMBER) return null;
-                int offset = args_ary[1].number;
-                if (args_ary[2].type != ExprNodeType.NUMBER) return null;
-
-                int len = args_ary[2].number - offset;
-                string subtext = text.substring (offset, len);
-                return string_node (subtext);
-            }
-            else if (func.data == "-") {
-                ExprNode[] args_ary = args_to_array (2, iter);
-                if (args_ary == null) return null;
-                if (args_ary[0].type != ExprNodeType.NUMBER) return null;
-                if (args_ary[1].type != ExprNodeType.NUMBER) return null;
-
-                return number_node (args_ary[0].number - args_ary[1].number);
-            }
-            else if (func.data == "car") {
-                if (!iter.next ()) return null;
-                var lst = iter.get ();
-                if (lst.type != ExprNodeType.ARRAY) return null;
-                return lst.nodes.first ();
-            }
-            else if (func.data == "string-to-number") {
-                if (!iter.next ()) return null;
-                var str = iter.get ();
-                if (str.type != ExprNodeType.STRING) return null;
-                return number_node (int.parse (str.data));
-            }
-            else if (func.data == "skk-times") {
-                var iter2 = env.get ("skk-num-list").nodes.list_iterator ();
-                if (!iter2.next ()) return null;
-                var n1 = int.parse (iter2.get ().data);
-                if (!iter2.next ()) return null;
-                var n2 = int.parse (iter2.get ().data);
-                return string_node ((n1 * n2).to_string());
-            }
-            else if (func.data == "skk-gadget-units-conversion") {
-                ExprNode[] args_ary = args_to_array (3, iter);
-                if (args_ary == null) return null;
-                if (args_ary[0].type != ExprNodeType.STRING) return null;
-                if (args_ary[1].type != ExprNodeType.NUMBER) return null;
-                if (args_ary[2].type != ExprNodeType.STRING) return null;
-
-                double m = skk_assoc_units (args_ary[0].data, args_ary[2].data);
-                string res = ((double) args_ary[1].number * m).to_string ();
-                return string_node (res + args_ary[2].data);
-            }
-            else if (func.data == "skk-current-date") {
-                var dt = skk_current_date_1 ();
-
-                if (iter.next ()) {
-                    var lmd = iter.get ();
-                    if (lmd.type != ExprNodeType.ARRAY) return null;
-                    // ignore rest arguments
-
-                    var params = new LinkedList<ExprNode?> ();
-                    params.add (array_node (dt));
-                    var sym_nil = symbol_node ("nil");
-                    params.add (sym_nil);
-                    params.add (sym_nil);
-                    params.add (sym_nil);
-
-                    return call_lambda (lmd, params, env);
-                }
-                else {
-                    var rtn = skk_default_current_date (dt, null, 1, true, 0, 0, 0);
-                    return string_node (rtn);
-                }
-            }
-            else if (func.data == "skk-default-current-date") {
-                ExprNode[] args_ary = args_to_array (7, iter);
-                if (args_ary == null) return null;
-
-                if (args_ary[0].type != ExprNodeType.ARRAY) return null;
-                string? format = (args_ary[1].type == ExprNodeType.STRING ?
-                                  args_ary[1].data : null);
-                if (args_ary[2].type != ExprNodeType.NUMBER) return null;
-                bool gengo_p = !(args_ary[3].type == ExprNodeType.SYMBOL &&
-                                 args_ary[3].data == "nil");
-                if (args_ary[4].type != ExprNodeType.NUMBER) return null;
-                int month_index = (args_ary[5].type == ExprNodeType.NUMBER ?
-                                   args_ary[5].number : -1);
-                int dow_index = (args_ary[6].type == ExprNodeType.NUMBER ?
-                                 args_ary[6].number : -1);
-
-                var rtn = skk_default_current_date (args_ary[0].nodes, format, args_ary[2].number, gengo_p, args_ary[4].number, month_index, dow_index);
-                return string_node (rtn);
-            }
-            else if (func.data == "skk-ad-to-gengo") {
-                ExprNode[] args_ary = args_to_array (3, iter);
-                if (args_ary == null) return null;
-                if (args_ary[0].type != ExprNodeType.NUMBER) return null;
-
-                var iter2 = env.get ("skk-num-list").nodes.list_iterator ();
-                if (!iter2.next ()) return null;
-                int ad = int.parse (iter2.get ().data);
-
-                var builder = new StringBuilder ();
-                var g = skk_ad_to_gengo_1 (ad);
-                if (g == null) return null;
-                builder.append (g.strs[args_ary[0].number]);
-                if (args_ary[1].type == ExprNodeType.STRING) {
-                    builder.append (args_ary[1].data);
-                }
-                builder.append (g.num.to_string ());
-                if (args_ary[2].type == ExprNodeType.STRING) {
-                    builder.append (args_ary[2].data);
-                }
-                return string_node (builder.str);
-            }
-            else if (func.data == "skk-gengo-to-ad") {
-                ExprNode[] args_ary = args_to_array (2, iter);
-                if (args_ary == null) return null;
-
-                var iter2 = env.get ("skk-num-list").nodes.list_iterator ();
-                if (!iter2.next ()) return null;
-                int y = int.parse (iter2.get ().data);
-
-                string midasi = env.get ("skk-henkan-key").data;
-
-                int idx = midasi.index_of ("#");
-                if (idx <= 0) return null;
-                string gengo_hira = midasi.substring (0, idx);
-
-                var builder = new StringBuilder ();
-                int ad = skk_gengo_to_ad_1 (gengo_hira, y);
-                if (ad < 0) return null;
-                if (args_ary[0].type == ExprNodeType.STRING) {
-                    builder.append (args_ary[0].data);
-                }
-                builder.append (ad.to_string ());
-                if (args_ary[1].type == ExprNodeType.STRING) {
-                    builder.append (args_ary[1].data);
-                }
-                return string_node (builder.str);
-            }
-            return null;
         }
 
-        private ExprNode? _eval (ExprNode node, Map<string, ExprNode?> env) {
-            if (node.type == ExprNodeType.ARRAY) {
-                var iter = node.nodes.list_iterator ();
-                if (iter.first ()) {
-                    var func = iter.get ();
-                    if (func.type == ExprNodeType.SYMBOL) {
-                        if (func.data == "lambda") {
-                            return node;
-                        }
-                        var args = new LinkedList<ExprNode?> ();
-                        while (iter.next ()) {
-                            var rtn = _eval (iter.get (), env);
-                            if (rtn == null) return null;
-                            args.add (rtn);
-                        }
-                        return apply (func, args, env);
-                    }
+        public LispObject f_skk_default_current_date (LispList args, Env env) {
+            var dt = ((LispCons) args).nth(0);
+            var fmt = ((LispCons) args).nth(1);
+            var num_type = ((LispCons) args).nth(2);
+            var gengo = ((LispCons) args).nth(3);
+            var gengo_index = ((LispCons) args).nth(4);
+            var month_index = ((LispCons) args).nth(5);
+            var dow_index = ((LispCons) args).nth(6);
+
+            var rtn = skk_default_current_date (
+                (LispList) dt,
+                ((fmt is LispString) ? ((LispString) fmt).data : null),
+                ((LispInt) num_type).data,
+                !(gengo is LispNil),
+                ((LispInt) gengo_index).data,
+                ((month_index is LispInt) ? ((LispInt) month_index).data : -1),
+                ((dow_index is LispInt) ? ((LispInt) dow_index).data : -1));
+            return new LispString (rtn);
+        }
+
+        public LispObject apply_lambda (LispList lmd, LispList args, Env env) throws LispError {
+            var new_env = Env ();
+            foreach (var entry in env.vars.entries) {
+                new_env.vars.set (entry.key, entry.value);
+            }
+
+            LispObject p = ((LispCons) lmd).cdr; // skip 'lambda'
+            LispObject params_p = ((LispCons) p).car;
+            LispObject args_p = args;
+            while (params_p is LispCons) {
+                if (!(args_p is LispCons)) throw new LispError.PARAM ("");
+                new_env.vars.set (((LispSymbol) ((LispCons) params_p).car).data,
+                                  ((LispCons) args_p).car);
+                args_p = ((LispCons) args_p).cdr;
+                params_p = ((LispCons) params_p).cdr;
+            }
+
+            p = ((LispCons) p).cdr;
+            LispObject rtn = new LispNil ();
+            while (p is LispCons) {
+                rtn = eval (((LispCons) p).car, new_env);
+                p = ((LispCons) p).cdr;
+            }
+            return rtn;
+        }
+
+        public LispObject apply (LispObject func, LispList args, Env env) throws LispError {
+            if (func is LispSymbol) {
+                string funcname = ((LispSymbol) func).data;
+                if (funcs.has_key (funcname)) {
+                    LispFunc f = funcs.get (funcname);
+                    return f.func(args, env);
                 }
+                throw new LispError.FUNC ("");
+            }
+            throw new LispError.TYPE ("");
+        }
+
+        public LispObject eval (LispObject x, Env env) throws LispError {
+            if (x is LispCons) {
+                var e1 = ((LispCons) x).car;
+                if (e1 is LispSymbol) {
+                    if (((LispSymbol) e1).data == "lambda") {
+                        return x;
+                    }
+                    else if (((LispSymbol) e1).data == "quote") {
+                        return ((LispCons) ((LispCons) x).cdr).car;
+                    }
+                    LispList args = new LispNil ();
+                    LispObject p = ((LispCons) x).cdr;
+                    while (p is LispCons) {
+                        args = args.rcons (eval (((LispCons) p).car, env));
+                        p = ((LispCons) p).cdr;
+                    }
+                    return apply (e1, args, env);
+                }
+                throw new LispError.TYPE ("");
+            }
+            else if (x is LispSymbol) {
+                string name = ((LispSymbol) x).data;
+                if (env.vars.has_key (name)) {
+                    return env.vars.get (name);
+                }
+                throw new LispError.VAR ("");
+            }
+            else if (x is LispString || x is LispInt || x is LispNil) {
+                return x;
+            }
+            // NOTREACHED
+            throw new LispError.UNKNOWN ("");
+        }
+
+        public void init_funcs () {
+            funcs.set ("concat", LispFunc (this.f_concat));
+            funcs.set ("current-time-string",
+                      LispFunc (this.f_current_time_string));
+            funcs.set ("pwd", LispFunc (this.f_pwd));
+            funcs.set ("skk-version", LispFunc (this.f_skk_version));
+            funcs.set ("-", LispFunc (this.f_minus));
+            funcs.set ("make-string", LispFunc (this.f_make_string));
+            funcs.set ("substring", LispFunc (this.f_substring));
+            funcs.set ("car", LispFunc (this.f_car));
+            funcs.set ("string-to-number", LispFunc (this.f_string_to_number));
+            funcs.set ("skk-times", LispFunc (this.f_skk_times));
+            funcs.set ("skk-gadget-units-conversion",
+                       LispFunc (this.f_skk_gadget_units_conversion));
+            funcs.set ("skk-ad-to-gengo", LispFunc (this.f_skk_ad_to_gengo));
+            funcs.set ("skk-gengo-to-ad", LispFunc (this.f_skk_gengo_to_ad));
+            funcs.set ("skk-current-date", LispFunc (this.f_skk_current_date));
+            funcs.set ("skk-default-current-date",
+                       LispFunc (this.f_skk_default_current_date));
+        }
+
+        public string? eval_expr (LispObject x, int[] numerics, string midasi) {
+            Env env = Env ();
+            LispList lst = new LispNil ();
+            for (int i = 0; i < numerics.length; i++) {
+                lst = lst.rcons (new LispString (numerics[i].to_string()));
+            }
+            env.vars.set ("skk-num-list", lst);
+            env.vars.set ("skk-henkan-key", new LispString (midasi));
+            env.vars.set ("fill-column", new LispInt (70));
+            init_funcs ();
+
+            LispObject? rtn = null;
+            try {
+                rtn = eval (x, env);
+            } catch (LispError e) {
                 return null;
             }
-            else if (node.type == ExprNodeType.SYMBOL) {
-                if (node.data.get_char (0) == '\'' ||
-                    node.data == "nil") {
-                    return node;
-                }
-                else if (env.has_key (node.data)) {
-                    return env.get (node.data);
-                }
-            }
-            else if (node.type == ExprNodeType.STRING ||
-                     node.type == ExprNodeType.NUMBER) {
-                return node;
-            }
-            return null;
-        }
-
-        public string? eval (ExprNode node, int[] numerics, string midasi) {
-            Map<string, ExprNode?> env = new HashMap<string, ExprNode?> ();
-            var num_list = new LinkedList<ExprNode?> ();
-            for (int i = 0; i < numerics.length; i++) {
-                num_list.add (string_node (numerics[i].to_string ()));
-            }
-            env.set ("skk-num-list", array_node (num_list));
-            env.set ("skk-henkan-key", string_node (midasi));
-            env.set ("fill-column", number_node (70));
-
-            ExprNode? rtn = _eval (node, env);
-            if (rtn != null) {
-                if (rtn.type == ExprNodeType.STRING) {
-                    return rtn.data;
-                }
-                else if (rtn.type == ExprNodeType.NUMBER) {
-                    return rtn.number.to_string ();
-                }
-            }
-            return null;
+            return rtn.to_string ();
         }
     }
 }
