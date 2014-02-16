@@ -257,9 +257,35 @@ namespace Skk {
         }
     }
 
-    struct Env {
-        public Map<string, LispObject> vars;
-        public Env () { vars = new HashMap<string, LispObject> (); }
+    class Env {
+        private Map<string, LispObject> vars;
+        private Env next;
+
+        public Env (Env? nxt) {
+            this.vars = new HashMap<string, LispObject> ();
+            this.next = nxt;
+        }
+
+        private Env? find_frame (string key) {
+            Env p = this;
+            do {
+                if (p.vars.has_key (key)) return p;
+                p = p.next;
+            } while (p != null);
+            return this;
+        }
+
+        public LispObject? get_var (string key) {
+            Env p = find_frame (key);
+            if (p == null) return null;
+            return p.vars.get (key);
+        }
+
+        public void set_var (string key, LispObject val) {
+            Env p = find_frame (key);
+            if (p == null) this.vars.set (key, val);
+            p.vars.set (key, val);
+        }
     }
 
     delegate LispObject LispFuncPtr (LispList args, Env env);
@@ -334,7 +360,7 @@ namespace Skk {
         }
 
         public LispObject f_skk_times (LispList args, Env env) {
-            var num_list = (LispList) env.vars.get ("skk-num-list");
+            var num_list = (LispList) env.get_var ("skk-num-list");
             LispObject p = num_list;
             int n = 1;
             while (p is LispCons) {
@@ -407,7 +433,7 @@ namespace Skk {
         }
 
         public LispObject f_skk_ad_to_gengo (LispList args, Env env) {
-            var num_list = (LispList) env.vars.get ("skk-num-list");
+            var num_list = (LispList) env.get_var ("skk-num-list");
             int ad = int.parse (((LispString) ((LispCons) num_list).car).data);
 
             var builder = new StringBuilder ();
@@ -441,9 +467,9 @@ namespace Skk {
         }
 
         public LispObject f_skk_gengo_to_ad (LispList args, Env env) {
-            var num_list = (LispList) env.vars.get ("skk-num-list");
+            var num_list = (LispList) env.get_var ("skk-num-list");
             int y = int.parse (((LispString) ((LispCons) num_list).car).data);
-            string midasi = ((LispString) env.vars.get ("skk-henkan-key")).data;
+            string midasi = ((LispString) env.get_var ("skk-henkan-key")).data;
 
             int idx = midasi.index_of ("#");
             string gengo_hira = midasi.substring (0, idx);
@@ -588,17 +614,14 @@ namespace Skk {
         }
 
         public LispObject apply_lambda (LispList lmd, LispList args, Env env) throws LispError {
-            var new_env = Env ();
-            foreach (var entry in env.vars.entries) {
-                new_env.vars.set (entry.key, entry.value);
-            }
+            var new_env = new Env (env);
 
             LispObject p = ((LispCons) lmd).cdr; // skip 'lambda'
             LispObject params_p = ((LispCons) p).car;
             LispObject args_p = args;
             while (params_p is LispCons) {
                 if (!(args_p is LispCons)) throw new LispError.PARAM ("");
-                new_env.vars.set (((LispSymbol) ((LispCons) params_p).car).data,
+                new_env.set_var (((LispSymbol) ((LispCons) params_p).car).data,
                                   ((LispCons) args_p).car);
                 args_p = ((LispCons) args_p).cdr;
                 params_p = ((LispCons) params_p).cdr;
@@ -647,8 +670,9 @@ namespace Skk {
             }
             else if (x is LispSymbol) {
                 string name = ((LispSymbol) x).data;
-                if (env.vars.has_key (name)) {
-                    return env.vars.get (name);
+                var rtn = env.get_var (name);
+                if (rtn != null) {
+                    return rtn;
                 }
                 throw new LispError.VAR ("");
             }
@@ -681,14 +705,14 @@ namespace Skk {
         }
 
         public string? eval_expr (LispObject x, int[] numerics, string midasi) {
-            Env env = Env ();
+            Env env = new Env (null);
             LispList lst = LispNil.get ();
             for (int i = 0; i < numerics.length; i++) {
                 lst = lst.rcons (new LispString (numerics[i].to_string()));
             }
-            env.vars.set ("skk-num-list", lst);
-            env.vars.set ("skk-henkan-key", new LispString (midasi));
-            env.vars.set ("fill-column", new LispInt (70));
+            env.set_var ("skk-num-list", lst);
+            env.set_var ("skk-henkan-key", new LispString (midasi));
+            env.set_var ("fill-column", new LispInt (70));
             init_funcs ();
 
             LispObject? rtn = null;
