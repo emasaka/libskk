@@ -50,6 +50,15 @@ namespace Skk {
     }
 
     class LispNil : Object, LispObject, LispList {
+        private static LispNil instance;
+
+        public static LispNil get () {
+            if (instance == null) {
+                instance = new LispNil ();
+            }
+            return instance;
+        }
+
         public LispList rcons (LispObject x) {
             return new LispCons (x, this);
         }
@@ -110,7 +119,7 @@ namespace Skk {
                 }
             }
             if (builder.str == "nil") {
-                return new LispNil ();
+                return LispNil.get ();
             }
             return new LispSymbol (builder.str);
         }
@@ -196,7 +205,7 @@ namespace Skk {
         }
 
         public LispList read_list (string expr, ref int index) {
-            LispList r = new LispNil ();
+            LispList r = LispNil.get ();
             bool stop = false;
             index++;
             unichar uc = '\0';
@@ -237,14 +246,14 @@ namespace Skk {
                 case '\'':
                     var x = read_expr (expr, ref index);
                     return new LispCons (new LispSymbol ("quote"),
-                                         new LispCons (x, new LispNil ()));
+                                         new LispCons (x, LispNil.get ()));
                 default:
                     index--;
                     return read_symbol (expr, ref index);
                 }
             }
             // empty expr string -> empty list
-            return new LispNil ();
+            return LispNil.get ();
         }
     }
 
@@ -403,7 +412,7 @@ namespace Skk {
 
             var builder = new StringBuilder ();
             var g = skk_ad_to_gengo_1 (ad);
-            if (g == null) return new LispNil ();
+            if (g == null) return LispNil.get ();
             builder.append (g.strs[((LispInt) ((LispCons) args).nth (0)).data]);
             var mae = ((LispCons) args).nth (1);
             if (mae is LispString) {
@@ -487,7 +496,7 @@ namespace Skk {
 
         private LispCons skk_current_date_1 () {
             string[] dt_a = asctime_array (new DateTime.now_local ());
-            LispList dt_l = new LispNil ();
+            LispList dt_l = LispNil.get ();
             foreach (var x in dt_a) {
                 dt_l = dt_l.rcons (new LispString (x));
             }
@@ -545,12 +554,11 @@ namespace Skk {
                 var lmd = ((LispCons) args).car;
                 // ignore rest arguments
 
-                var q_nil = new LispNil ();
-                LispList params = q_nil;
+                LispList params = LispNil.get ();
                 params = params.rcons (dt);
-                params.rcons (q_nil);
-                params.rcons (q_nil);
-                params.rcons (q_nil);
+                params.rcons (LispNil.get ());
+                params.rcons (LispNil.get ());
+                params.rcons (LispNil.get ());
                 return apply_lambda ((LispList) lmd, params, env);
             }
             else {
@@ -597,7 +605,7 @@ namespace Skk {
             }
 
             p = ((LispCons) p).cdr;
-            LispObject rtn = new LispNil ();
+            LispObject rtn = LispNil.get ();
             while (p is LispCons) {
                 rtn = eval (((LispCons) p).car, new_env);
                 p = ((LispCons) p).cdr;
@@ -627,7 +635,7 @@ namespace Skk {
                     else if (((LispSymbol) e1).data == "quote") {
                         return ((LispCons) ((LispCons) x).cdr).car;
                     }
-                    LispList args = new LispNil ();
+                    LispList args = LispNil.get ();
                     LispObject p = ((LispCons) x).cdr;
                     while (p is LispCons) {
                         args = args.rcons (eval (((LispCons) p).car, env));
@@ -674,7 +682,7 @@ namespace Skk {
 
         public string? eval_expr (LispObject x, int[] numerics, string midasi) {
             Env env = Env ();
-            LispList lst = new LispNil ();
+            LispList lst = LispNil.get ();
             for (int i = 0; i < numerics.length; i++) {
                 lst = lst.rcons (new LispString (numerics[i].to_string()));
             }
