@@ -267,23 +267,23 @@ namespace Skk {
         }
 
         private Env? find_frame (string key) {
-            Env p = this;
+            Env? p = this;
             do {
                 if (p.vars.has_key (key)) return p;
                 p = p.next;
             } while (p != null);
-            return this;
+            return null;
         }
 
         public LispObject? get_var (string key) {
-            Env p = find_frame (key);
+            Env? p = find_frame (key);
             if (p == null) return null;
             return p.vars.get (key);
         }
 
         public void set_var (string key, LispObject val) {
-            Env p = find_frame (key);
-            if (p == null) this.vars.set (key, val);
+            Env? p = find_frame (key);
+            if (p == null) p = this;
             p.vars.set (key, val);
         }
     }
