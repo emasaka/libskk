@@ -281,10 +281,8 @@ namespace Skk {
             return p.vars.get (key);
         }
 
-        public void set_var (string key, LispObject val) {
-            Env? p = find_frame (key);
-            if (p == null) p = this;
-            p.vars.set (key, val);
+        public void set_var1 (string key, LispObject val) {
+            this.vars.set (key, val);
         }
     }
 
@@ -621,7 +619,7 @@ namespace Skk {
             LispObject args_p = args;
             while (params_p is LispCons) {
                 if (!(args_p is LispCons)) throw new LispError.PARAM ("");
-                new_env.set_var (((LispSymbol) ((LispCons) params_p).car).data,
+                new_env.set_var1 (((LispSymbol) ((LispCons) params_p).car).data,
                                   ((LispCons) args_p).car);
                 args_p = ((LispCons) args_p).cdr;
                 params_p = ((LispCons) params_p).cdr;
@@ -710,9 +708,9 @@ namespace Skk {
             for (int i = 0; i < numerics.length; i++) {
                 lst = lst.rcons (new LispString (numerics[i].to_string()));
             }
-            env.set_var ("skk-num-list", lst);
-            env.set_var ("skk-henkan-key", new LispString (midasi));
-            env.set_var ("fill-column", new LispInt (70));
+            env.set_var1 ("skk-num-list", lst);
+            env.set_var1 ("skk-henkan-key", new LispString (midasi));
+            env.set_var1 ("fill-column", new LispInt (70));
             init_funcs ();
 
             LispObject? rtn = null;
