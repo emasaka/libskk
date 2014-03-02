@@ -21,6 +21,9 @@ namespace Skk {
     errordomain LispError { TYPE, VAR, FUNC, PARAM, UNKNOWN }
 
     interface LispObject : Object {
+        public virtual LispObject eval (Env env, ExprEvaluator ev) throws LispError {
+            return this;
+        }
         public abstract string to_string ();
     }
 
@@ -41,6 +44,15 @@ namespace Skk {
     class LispSymbol : Object, LispObject {
         public string data { get; private set; }
         public LispSymbol (string data) { this.data = data; }
+
+        public LispObject eval (Env env, ExprEvaluator ev) throws LispError {
+            string name = this.data;
+            var rtn = env.get_var (name);
+            if (rtn != null) {
+                return rtn;
+            }
+            throw new LispError.VAR ("");
+        }
 
         public string to_string () { return this.data; }
     }
@@ -92,6 +104,26 @@ namespace Skk {
                 p = ((LispCons) p).cdr;
             }
             return ((LispCons) p).car;
+        }
+
+        public LispObject eval (Env env, ExprEvaluator ev) throws LispError {
+            var e1 = this.car;
+            if (e1 is LispSymbol) {
+                if (((LispSymbol) e1).data == "lambda") {
+                    return this;
+                }
+                else if (((LispSymbol) e1).data == "quote") {
+                    return ((LispCons) this.cdr).car;
+                }
+                LispObject[] args = {};
+                LispObject p = this.cdr;
+                while (p is LispCons) {
+                    args += (((LispCons) p).car).eval (env, ev);
+                    p = ((LispCons) p).cdr;
+                }
+                return ev.apply (e1, args, env);
+            }
+            throw new LispError.TYPE ("");
         }
 
         public string to_string () { return ""; }
@@ -614,14 +646,14 @@ namespace Skk {
             LispObject params_p = ((LispCons) p).car;
             foreach (var arg in args) {
                 new_env.set_var1 (((LispSymbol) ((LispCons) params_p).car).data,
-                                 arg);
+                                  arg);
                 params_p = ((LispCons) params_p).cdr;
             }
 
             p = ((LispCons) p).cdr;
             LispObject rtn = LispNil.get ();
             while (p is LispCons) {
-                rtn = eval (((LispCons) p).car, new_env);
+                rtn = (((LispCons) p).car).eval (new_env, this);
                 p = ((LispCons) p).cdr;
             }
             return rtn;
@@ -637,41 +669,6 @@ namespace Skk {
                 throw new LispError.FUNC ("");
             }
             throw new LispError.TYPE ("");
-        }
-
-        public LispObject eval (LispObject x, Env env) throws LispError {
-            if (x is LispCons) {
-                var e1 = ((LispCons) x).car;
-                if (e1 is LispSymbol) {
-                    if (((LispSymbol) e1).data == "lambda") {
-                        return x;
-                    }
-                    else if (((LispSymbol) e1).data == "quote") {
-                        return ((LispCons) ((LispCons) x).cdr).car;
-                    }
-                    LispObject[] args = {};
-                    LispObject p = ((LispCons) x).cdr;
-                    while (p is LispCons) {
-                        args += eval (((LispCons) p).car, env);
-                        p = ((LispCons) p).cdr;
-                    }
-                    return apply (e1, args, env);
-                }
-                throw new LispError.TYPE ("");
-            }
-            else if (x is LispSymbol) {
-                string name = ((LispSymbol) x).data;
-                var rtn = env.get_var (name);
-                if (rtn != null) {
-                    return rtn;
-                }
-                throw new LispError.VAR ("");
-            }
-            else if (x is LispString || x is LispInt || x is LispNil) {
-                return x;
-            }
-            // NOTREACHED
-            throw new LispError.UNKNOWN ("");
         }
 
         public void init_funcs () {
@@ -708,7 +705,7 @@ namespace Skk {
 
             LispObject? rtn = null;
             try {
-                rtn = eval (x, env);
+                rtn = x.eval (env, this);
             } catch (LispError e) {
                 return null;
             }
