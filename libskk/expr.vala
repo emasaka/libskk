@@ -286,7 +286,7 @@ namespace Skk {
         }
     }
 
-    delegate LispObject LispFuncPtr (LispList args, Env env);
+    delegate LispObject LispFuncPtr (LispObject[] args, Env env) throws LispError;
 
     // wrap delegates to store in HashMap
     struct LispFunc {
@@ -297,67 +297,68 @@ namespace Skk {
     class ExprEvaluator : Object {
         private Map<string, LispFunc?> funcs = new HashMap<string, LispFunc?> ();
 
-        public LispObject f_concat (LispList args, Env env) {
-            LispObject p = args;
+        public LispObject f_concat (LispObject[] args, Env env) throws LispError {
             var builder = new StringBuilder ();
-            while (p is LispCons) {
-                var e = ((LispCons) p).car;
+            foreach (var e in args) {
                 if (e is LispString) {
                     builder.append (((LispString) e).data);
                 }
-                p = ((LispCons) p).cdr;
             }
             return new LispString (builder.str);
         }
 
-        public LispObject f_current_time_string (LispList args, Env env) {
+        public LispObject f_current_time_string (LispObject[] args, Env env) throws LispError {
             var d = asctime_array (new DateTime.now_local ());
             string asc = "%s %s %2s %s:%s:%s %s".printf(d[3], d[1], d[2], d[4],
                                                         d[5], d[6], d[0]);
             return new LispString (asc);
         }
 
-        public LispObject f_pwd (LispList args, Env env) {
+        public LispObject f_pwd (LispObject[] args, Env env) throws LispError {
             return new LispString (Environment.get_current_dir ());
         }
 
-        public LispObject f_skk_version (LispList args, Env env) {
+        public LispObject f_skk_version (LispObject[] args, Env env) throws LispError {
             return new LispString ("%s/%s".printf (Config.PACKAGE_NAME,
                                                    Config.PACKAGE_VERSION));
         }
 
-        public LispObject f_minus (LispList args, Env env) {
-            return new LispInt (((LispInt) ((LispCons) args).nth (0)).data -
-                                ((LispInt) ((LispCons) args).nth (1)).data);
+        public LispObject f_minus (LispObject[] args, Env env) throws LispError {
+            if (args.length != 2) throw new LispError.PARAM ("");
+            return new LispInt (((LispInt) args[0]).data -
+                                ((LispInt) args[1]).data);
         }
 
-        public LispObject f_make_string (LispList args, Env env) {
+        public LispObject f_make_string (LispObject[] args, Env env) throws LispError {
+            if (args.length != 2) throw new LispError.PARAM ("");
             var builder = new StringBuilder ();
-            int num = ((LispInt) ((LispCons) args).nth (0)).data;
-            unichar c = (unichar) ((LispInt) ((LispCons) args).nth (1)).data;
+            int num = ((LispInt) args[0]).data;
+            unichar c = (unichar) ((LispInt) args[1]).data;
             for (int i = 0; i < num; i++) {
                 builder.append_unichar (c);
             }
             return new LispString (builder.str);
         }
 
-        public LispObject f_substring (LispList args, Env env) {
-            int offset = ((LispInt) ((LispCons) args).nth (1)).data;
-            int len = ((LispInt) ((LispCons) args).nth (2)).data - offset;
-            string text = ((LispString) ((LispCons) args).nth (0)).data;
+        public LispObject f_substring (LispObject[] args, Env env) throws LispError {
+            if (args.length != 3) throw new LispError.PARAM ("");
+            int offset = ((LispInt) args[1]).data;
+            int len = ((LispInt) args[2]).data - offset;
+            string text = ((LispString) args[0]).data;
             return new LispString (text.substring (offset, len));
         }
 
-        public LispObject f_car (LispList args, Env env) {
-            return ((LispCons) ((LispCons) args).car).car;
+        public LispObject f_car (LispObject[] args, Env env) throws LispError {
+            if (args.length != 1) throw new LispError.PARAM ("");
+            return ((LispCons) args[0]).car;
         }
 
-        public LispObject f_string_to_number (LispList args, Env env) {
-            var e1 = ((LispCons) args).car;
-            return new LispInt (int.parse (((LispString) e1).data));
+        public LispObject f_string_to_number (LispObject[] args, Env env) throws LispError {
+            if (args.length != 1) throw new LispError.PARAM ("");
+            return new LispInt (int.parse (((LispString) args[0]).data));
         }
 
-        public LispObject f_skk_times (LispList args, Env env) {
+        public LispObject f_skk_times (LispObject[] args, Env env) throws LispError {
             var num_list = (LispList) env.get_var ("skk-num-list");
             LispObject p = num_list;
             int n = 1;
@@ -400,10 +401,11 @@ namespace Skk {
             return double.parse (((LispString) r2).data);
         }
 
-        public LispObject f_skk_gadget_units_conversion (LispList args, Env env) {
-            string u_from = ((LispString) ((LispCons) args).nth (0)).data;
-            string u_to = ((LispString) ((LispCons) args).nth (2)).data;
-            int x = ((LispInt) ((LispCons) args).nth (1)).data;
+        public LispObject f_skk_gadget_units_conversion (LispObject[] args, Env env) throws LispError {
+            if (args.length != 3) throw new LispError.PARAM ("");
+            string u_from = ((LispString) args[0]).data;
+            string u_to = ((LispString) args[2]).data;
+            int x = ((LispInt) args[1]).data;
             double m = skk_assoc_units (u_from, u_to);
             string res = ((double) x * m).to_string ();
             return new LispString (res + u_to);
@@ -430,22 +432,21 @@ namespace Skk {
             return null;
         }
 
-        public LispObject f_skk_ad_to_gengo (LispList args, Env env) {
+        public LispObject f_skk_ad_to_gengo (LispObject[] args, Env env) throws LispError {
+            if (args.length != 3) throw new LispError.PARAM ("");
             var num_list = (LispList) env.get_var ("skk-num-list");
             int ad = int.parse (((LispString) ((LispCons) num_list).car).data);
 
             var builder = new StringBuilder ();
             var g = skk_ad_to_gengo_1 (ad);
             if (g == null) return LispNil.get ();
-            builder.append (g.strs[((LispInt) ((LispCons) args).nth (0)).data]);
-            var mae = ((LispCons) args).nth (1);
-            if (mae is LispString) {
-                builder.append (((LispString) mae).data);
+            builder.append (g.strs[((LispInt) args[0]).data]);
+            if (args[1] is LispString) {
+                builder.append (((LispString) args[1]).data);
             }
             builder.append (g.num.to_string ());
-            var ato = ((LispCons) args).nth (2);
-            if (ato is LispString) {
-                builder.append (((LispString) ato).data);
+            if (args[2] is LispString) {
+                builder.append (((LispString) args[2]).data);
             }
             return new LispString (builder.str);
         }
@@ -464,7 +465,8 @@ namespace Skk {
             return -1;
         }
 
-        public LispObject f_skk_gengo_to_ad (LispList args, Env env) {
+        public LispObject f_skk_gengo_to_ad (LispObject[] args, Env env) throws LispError {
+            if (args.length != 2) throw new LispError.PARAM ("");
             var num_list = (LispList) env.get_var ("skk-num-list");
             int y = int.parse (((LispString) ((LispCons) num_list).car).data);
             string midasi = ((LispString) env.get_var ("skk-henkan-key")).data;
@@ -473,14 +475,12 @@ namespace Skk {
             string gengo_hira = midasi.substring (0, idx);
             var builder = new StringBuilder ();
             int ad = skk_gengo_to_ad_1 (gengo_hira, y);
-            var mae = ((LispCons) args).nth (0);
-            if (mae is LispString) {
-                builder.append (((LispString) mae).data);
+            if (args[0] is LispString) {
+                builder.append (((LispString) args[0]).data);
             }
             builder.append (ad.to_string ());
-            var ato = ((LispCons) args).nth (1);
-            if (ato is LispString) {
-                builder.append (((LispString) ato).data);
+            if (args[1] is LispString) {
+                builder.append (((LispString) args[1]).data);
             }
             return new LispString (builder.str);
         }
@@ -571,34 +571,30 @@ namespace Skk {
             return fmt.printf (year_str, month_str, day_str, dow_str);
         }
 
-        public LispObject f_skk_current_date (LispList args, Env env) {
+        public LispObject f_skk_current_date (LispObject[] args, Env env) throws LispError {
             var dt = skk_current_date_1 ();
 
-            if (args is LispCons) {
-                var lmd = ((LispCons) args).car;
-                // ignore rest arguments
-
-                LispList params = LispNil.get ();
-                params = params.rcons (dt);
-                params.rcons (LispNil.get ());
-                params.rcons (LispNil.get ());
-                params.rcons (LispNil.get ());
-                return apply_lambda ((LispList) lmd, params, env);
-            }
-            else {
+            if (args.length == 0) {
                 var rtn = skk_default_current_date (dt, null, 1, true, 0, 0, 0);
                 return new LispString (rtn);
             }
+            else {
+                // ignore arguments except for 1st argument
+                LispObject[] params = {dt, LispNil.get (),
+                                       LispNil.get (), LispNil.get ()};
+                return apply_lambda ((LispList) args[0], params, env);
+            }
         }
 
-        public LispObject f_skk_default_current_date (LispList args, Env env) {
-            var dt = ((LispCons) args).nth(0);
-            var fmt = ((LispCons) args).nth(1);
-            var num_type = ((LispCons) args).nth(2);
-            var gengo = ((LispCons) args).nth(3);
-            var gengo_index = ((LispCons) args).nth(4);
-            var month_index = ((LispCons) args).nth(5);
-            var dow_index = ((LispCons) args).nth(6);
+        public LispObject f_skk_default_current_date (LispObject[] args, Env env) throws LispError {
+            if (args.length != 7) throw new LispError.PARAM ("");
+            var dt = args[0];
+            var fmt = args[1];
+            var num_type = args[2];
+            var gengo = args[3];
+            var gengo_index = args[4];
+            var month_index = args[5];
+            var dow_index = args[6];
 
             var rtn = skk_default_current_date (
                 (LispList) dt,
@@ -611,17 +607,14 @@ namespace Skk {
             return new LispString (rtn);
         }
 
-        public LispObject apply_lambda (LispList lmd, LispList args, Env env) throws LispError {
+        public LispObject apply_lambda (LispList lmd, LispObject[] args, Env env) throws LispError {
             var new_env = new Env (env);
 
             LispObject p = ((LispCons) lmd).cdr; // skip 'lambda'
             LispObject params_p = ((LispCons) p).car;
-            LispObject args_p = args;
-            while (params_p is LispCons) {
-                if (!(args_p is LispCons)) throw new LispError.PARAM ("");
+            foreach (var arg in args) {
                 new_env.set_var1 (((LispSymbol) ((LispCons) params_p).car).data,
-                                  ((LispCons) args_p).car);
-                args_p = ((LispCons) args_p).cdr;
+                                 arg);
                 params_p = ((LispCons) params_p).cdr;
             }
 
@@ -634,7 +627,7 @@ namespace Skk {
             return rtn;
         }
 
-        public LispObject apply (LispObject func, LispList args, Env env) throws LispError {
+        public LispObject apply (LispObject func, LispObject[] args, Env env) throws LispError {
             if (func is LispSymbol) {
                 string funcname = ((LispSymbol) func).data;
                 if (funcs.has_key (funcname)) {
@@ -656,10 +649,10 @@ namespace Skk {
                     else if (((LispSymbol) e1).data == "quote") {
                         return ((LispCons) ((LispCons) x).cdr).car;
                     }
-                    LispList args = LispNil.get ();
+                    LispObject[] args = {};
                     LispObject p = ((LispCons) x).cdr;
                     while (p is LispCons) {
-                        args = args.rcons (eval (((LispCons) p).car, env));
+                        args += eval (((LispCons) p).car, env);
                         p = ((LispCons) p).cdr;
                     }
                     return apply (e1, args, env);
