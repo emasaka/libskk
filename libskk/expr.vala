@@ -21,7 +21,7 @@ namespace Skk {
     errordomain LispError { TYPE, VAR, FUNC, PARAM, UNKNOWN }
 
     interface LispObject : Object {
-        public virtual LispObject eval (Env env, ExprEvaluator ev) throws LispError {
+        public virtual LispObject eval (Env env) throws LispError {
             return this;
         }
         public abstract string to_string ();
@@ -45,13 +45,21 @@ namespace Skk {
         public string data { get; private set; }
         public LispSymbol (string data) { this.data = data; }
 
-        public LispObject eval (Env env, ExprEvaluator ev) throws LispError {
+        public LispObject eval (Env env) throws LispError {
             string name = this.data;
             var rtn = env.get_var (name);
             if (rtn != null) {
                 return rtn;
             }
             throw new LispError.VAR ("");
+        }
+
+        public LispObject apply (LispObject[] args, Env env) throws LispError {
+            if (env.funcs.has_key (this.data)) {
+                LispFunc f = env.funcs.get (this.data);
+                return f.func(args, env);
+            }
+            throw new LispError.FUNC ("");
         }
 
         public string to_string () { return this.data; }
@@ -106,7 +114,7 @@ namespace Skk {
             return ((LispCons) p).car;
         }
 
-        public LispObject eval (Env env, ExprEvaluator ev) throws LispError {
+        public LispObject eval (Env env) throws LispError {
             var e1 = this.car;
             if (e1 is LispSymbol) {
                 if (((LispSymbol) e1).data == "lambda") {
@@ -118,10 +126,10 @@ namespace Skk {
                 LispObject[] args = {};
                 LispObject p = this.cdr;
                 while (p is LispCons) {
-                    args += (((LispCons) p).car).eval (env, ev);
+                    args += (((LispCons) p).car).eval (env);
                     p = ((LispCons) p).cdr;
                 }
-                return ev.apply (e1, args, env);
+                return ((LispSymbol) e1).apply (args, env);
             }
             throw new LispError.TYPE ("");
         }
@@ -292,10 +300,16 @@ namespace Skk {
     class Env {
         private Map<string, LispObject> vars;
         private Env next;
+        public Map<string, LispFunc?> funcs;
 
         public Env (Env? nxt) {
             this.vars = new HashMap<string, LispObject> ();
             this.next = nxt;
+            if (nxt == null) {
+                this.funcs = new HashMap<string, LispFunc?> ();
+            } else {
+                this.funcs = nxt.funcs;
+            }
         }
 
         private Env? find_frame (string key) {
@@ -327,8 +341,6 @@ namespace Skk {
     }
 
     class ExprEvaluator : Object {
-        private Map<string, LispFunc?> funcs = new HashMap<string, LispFunc?> ();
-
         public LispObject f_concat (LispObject[] args, Env env) throws LispError {
             var builder = new StringBuilder ();
             foreach (var e in args) {
@@ -653,43 +665,31 @@ namespace Skk {
             p = ((LispCons) p).cdr;
             LispObject rtn = LispNil.get ();
             while (p is LispCons) {
-                rtn = (((LispCons) p).car).eval (new_env, this);
+                rtn = (((LispCons) p).car).eval (new_env);
                 p = ((LispCons) p).cdr;
             }
             return rtn;
         }
 
-        public LispObject apply (LispObject func, LispObject[] args, Env env) throws LispError {
-            if (func is LispSymbol) {
-                string funcname = ((LispSymbol) func).data;
-                if (funcs.has_key (funcname)) {
-                    LispFunc f = funcs.get (funcname);
-                    return f.func(args, env);
-                }
-                throw new LispError.FUNC ("");
-            }
-            throw new LispError.TYPE ("");
-        }
-
-        public void init_funcs () {
-            funcs.set ("concat", LispFunc (this.f_concat));
-            funcs.set ("current-time-string",
-                      LispFunc (this.f_current_time_string));
-            funcs.set ("pwd", LispFunc (this.f_pwd));
-            funcs.set ("skk-version", LispFunc (this.f_skk_version));
-            funcs.set ("-", LispFunc (this.f_minus));
-            funcs.set ("make-string", LispFunc (this.f_make_string));
-            funcs.set ("substring", LispFunc (this.f_substring));
-            funcs.set ("car", LispFunc (this.f_car));
-            funcs.set ("string-to-number", LispFunc (this.f_string_to_number));
-            funcs.set ("skk-times", LispFunc (this.f_skk_times));
-            funcs.set ("skk-gadget-units-conversion",
-                       LispFunc (this.f_skk_gadget_units_conversion));
-            funcs.set ("skk-ad-to-gengo", LispFunc (this.f_skk_ad_to_gengo));
-            funcs.set ("skk-gengo-to-ad", LispFunc (this.f_skk_gengo_to_ad));
-            funcs.set ("skk-current-date", LispFunc (this.f_skk_current_date));
-            funcs.set ("skk-default-current-date",
-                       LispFunc (this.f_skk_default_current_date));
+        public void init_funcs (Env env) {
+            env.funcs.set ("concat", LispFunc (this.f_concat));
+            env.funcs.set ("current-time-string",
+                           LispFunc (this.f_current_time_string));
+            env.funcs.set ("pwd", LispFunc (this.f_pwd));
+            env.funcs.set ("skk-version", LispFunc (this.f_skk_version));
+            env.funcs.set ("-", LispFunc (this.f_minus));
+            env.funcs.set ("make-string", LispFunc (this.f_make_string));
+            env.funcs.set ("substring", LispFunc (this.f_substring));
+            env.funcs.set ("car", LispFunc (this.f_car));
+            env.funcs.set ("string-to-number", LispFunc (this.f_string_to_number));
+            env.funcs.set ("skk-times", LispFunc (this.f_skk_times));
+            env.funcs.set ("skk-gadget-units-conversion",
+                           LispFunc (this.f_skk_gadget_units_conversion));
+            env.funcs.set ("skk-ad-to-gengo", LispFunc (this.f_skk_ad_to_gengo));
+            env.funcs.set ("skk-gengo-to-ad", LispFunc (this.f_skk_gengo_to_ad));
+            env.funcs.set ("skk-current-date", LispFunc (this.f_skk_current_date));
+            env.funcs.set ("skk-default-current-date",
+                           LispFunc (this.f_skk_default_current_date));
         }
 
         public string? eval_expr (LispObject x, int[] numerics, string midasi) {
@@ -701,11 +701,11 @@ namespace Skk {
             env.set_var1 ("skk-num-list", lst);
             env.set_var1 ("skk-henkan-key", new LispString (midasi));
             env.set_var1 ("fill-column", new LispInt (70));
-            init_funcs ();
+            init_funcs (env);
 
             LispObject? rtn = null;
             try {
-                rtn = x.eval (env, this);
+                rtn = x.eval (env);
             } catch (LispError e) {
                 return null;
             }
